@@ -1,6 +1,5 @@
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -8,13 +7,17 @@ const PORT = process.env.PORT || 10000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// สร้างและเชื่อมต่อฐานข้อมูล SQLite
+// 🔒 ตั้งค่ารหัสผ่านแอดมินตามที่คุณต้องการ
+const ADMIN_USER = "Kokin";
+const ADMIN_PASS = "0954609460";
+
+// เชื่อมต่อฐานข้อมูล SQLite
 const db = new sqlite3.Database('./database.db', (err) => {
     if (err) console.error("Database error:", err.message);
     else console.log("Connected to SQLite Database.");
 });
 
-// สร้างตารางเก็บโค้ดและไอดีไก่
+// สร้างตารางเก็บโค้ด
 db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,7 +27,7 @@ db.serialize(() => {
     )`);
 });
 
-// ------------------- หน้าเว็บ HTML (UI) -------------------
+// ------------------- หน้าสำหรับลูกค้า -------------------
 app.get('/', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -44,7 +47,6 @@ app.get('/', (req, res) => {
             #result { margin-top: 20px; padding: 15px; border-radius: 8px; display: none; word-break: break-all; }
             .success { background: #14532d; color: #4ade80; border: 1px solid #22c55e; }
             .error { background: #451a1a; color: #f87171; border: 1px solid #ef4444; }
-            .admin-link { margin-top: 25px; display: block; color: #64748b; font-size: 12px; text-decoration: none; }
         </style>
     </head>
     <body>
@@ -53,9 +55,7 @@ app.get('/', (req, res) => {
             <p style="color: #94a3b8; font-size: 14px;">กรอกโค้ดที่คุณได้รับเพื่อรับไอดีเข้าเกม</p>
             <input type="text" id="codeInput" placeholder="กรอกโค้ดที่นี่..." />
             <button onclick="redeemCode()">แลกไอดีทันที</button>
-
             <div id="result"></div>
-            <a href="/admin" class="admin-link">เข้าสู่ระบบแอดมิน (สำหรับเจ้าของร้าน)</a>
         </div>
 
         <script>
@@ -89,7 +89,7 @@ app.get('/', (req, res) => {
     `);
 });
 
-// ------------------- หน้าแอดมินสำหรับเพิ่มโค้ด -------------------
+// ------------------- หน้าสำหรับแอดมิน (ล็อกอินด้วยรหัสใหม่) -------------------
 app.get('/admin', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -99,27 +99,62 @@ app.get('/admin', (req, res) => {
         <title>ระบบแอดมิน - เพิ่มโค้ดไอดีไก่</title>
         <style>
             body { background: #0f172a; color: #fff; font-family: sans-serif; padding: 20px; display: flex; justify-content: center; }
-            .box { background: #1e293b; padding: 25px; border-radius: 12px; width: 100%; max-width: 500px; }
-            input, textarea { width: 100%; padding: 10px; margin: 8px 0; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; }
-            button { width: 100%; padding: 12px; background: #3b82f6; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
-            a { color: #94a3b8; display: inline-block; margin-top: 15px; }
+            .box { background: #1e293b; padding: 25px; border-radius: 12px; width: 100%; max-width: 450px; }
+            input, textarea { width: 100%; padding: 10px; margin: 8px 0; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; box-sizing: border-box; }
+            button { width: 100%; padding: 12px; background: #3b82f6; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 10px; }
+            .hidden { display: none; }
+            a { color: #94a3b8; display: inline-block; margin-top: 15px; text-decoration: none; }
         </style>
     </head>
     <body>
         <div class="box">
-            <h2>⚙️ แอดมิน: เพิ่มโค้ดและไอดีไก่</h2>
-            <label>โค้ดลับ (ตั้งเองได้เลย):</label>
-            <input type="text" id="addCode" placeholder="เช่น FREE-CHICKEN-01" />
-            
-            <label>ข้อมูลไอดีไก่ (User : Pass):</label>
-            <textarea id="addAccount" rows="3" placeholder="เช่น ID: chicken999 | Pass: 123456"></textarea>
-            
-            <button onclick="addCode()">เพิ่มเข้าฐานข้อมูล</button>
-            <br><br>
-            <a href="/">← กลับหน้าหลักลูกค้า</a>
+            <!-- ฟอร์มเข้าสู่ระบบ -->
+            <div id="loginSection">
+                <h2>🔒 เข้าสู่ระบบแอดมิน</h2>
+                <label>Username:</label>
+                <input type="text" id="adminUser" placeholder="กรอกชื่อผู้ใช้" />
+                <label>Password:</label>
+                <input type="password" id="adminPass" placeholder="กรอกรหัสผ่าน" />
+                <button onclick="login()">เข้าสู่ระบบ</button>
+            </div>
+
+            <!-- ฟอร์มเพิ่มไอดี -->
+            <div id="adminPanel" class="hidden">
+                <h2>⚙️ แอดมิน: เพิ่มโค้ดและไอดีไก่</h2>
+                <label>โค้ดลับ (ตั้งเองได้เลย):</label>
+                <input type="text" id="addCode" placeholder="เช่น FREE-CHICKEN-01" />
+                
+                <label>ข้อมูลไอดีไก่ (User : Pass):</label>
+                <textarea id="addAccount" rows="3" placeholder="เช่น ID: chicken999 | Pass: 123456"></textarea>
+                
+                <button onclick="addCode()">เพิ่มเข้าฐานข้อมูล</button>
+            </div>
+
+            <br><a href="/">← กลับหน้าหลักลูกค้า</a>
         </div>
 
         <script>
+            let currentToken = "";
+
+            function login() {
+                const u = document.getElementById('adminUser').value;
+                const p = document.getElementById('adminPass').value;
+                currentToken = btoa(u + ":" + p);
+
+                fetch('/api/check-auth', {
+                    headers: { 'Authorization': 'Basic ' + currentToken }
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('loginSection').classList.add('hidden');
+                        document.getElementById('adminPanel').classList.remove('hidden');
+                    } else {
+                        alert("❌ ชื่อผู้ใช้หรือรหัสผ่านแอดมินไม่ถูกต้อง!");
+                    }
+                });
+            }
+
             async function addCode() {
                 const code = document.getElementById('addCode').value.trim();
                 const account = document.getElementById('addAccount').value.trim();
@@ -127,7 +162,10 @@ app.get('/admin', (req, res) => {
 
                 const res = await fetch('/api/add-code', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Basic ' + currentToken
+                    },
                     body: JSON.stringify({ code, account })
                 });
                 const data = await res.json();
@@ -143,16 +181,33 @@ app.get('/admin', (req, res) => {
     `);
 });
 
-// ------------------- Backend API -------------------
+// ------------------- API Backend -------------------
+const checkAuth = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ success: false, message: "ไม่มีสิทธิ์เข้าถึง" });
 
-// 1. ระบบแลกโค้ด
-app.post('/api/redeem', (req, res) => {
+    const auth = Buffer.from(authHeader.split(' ')[1], 'base64').toString().split(':');
+    const user = auth[0];
+    const pass = auth[1];
+
+    if (user === ADMIN_USER && pass === ADMIN_PASS) {
+        next();
+    } else {
+        res.status(401).json({ success: false, message: "รหัสผ่านไม่ถูกต้อง" });
+    }
+};
+
+app.get('/api/check-auth', checkAuth, (req, res) => {
+    res.json({ success: true });
+});
+
+app.post('/api/redeem', (req, res, next) => {
+    // ข้ามการบล็อกสำหรับหน้าลูกค้าทั่วไป
     const { code } = req.body;
     db.get(`SELECT * FROM items WHERE code = ? AND is_used = 0`, [code], (err, row) => {
         if (err) return res.json({ success: false, message: "เกิดข้อผิดพลาดของระบบ" });
         if (!row) return res.json({ success: false, message: "โค้ดไม่ถูกต้อง หรือถูกใช้งานไปแล้ว!" });
 
-        // ทำเครื่องหมายว่าโค้ดถูกใช้แล้ว
         db.run(`UPDATE items SET is_used = 1 WHERE id = ?`, [row.id], (err) => {
             if (err) return res.json({ success: false, message: "บันทึกข้อมูลไม่สำเร็จ" });
             res.json({ success: true, account: row.account_info });
@@ -160,8 +215,7 @@ app.post('/api/redeem', (req, res) => {
     });
 });
 
-// 2. ระบบเพิ่มโค้ด (สำหรับแอดมิน)
-app.post('/api/add-code', (req, res) => {
+app.post('/api/add-code', checkAuth, (req, res) => {
     const { code, account } = req.body;
     db.run(`INSERT INTO items (code, account_info) VALUES (?, ?)`, [code, account], function(err) {
         if (err) return res.json({ success: false, message: "โค้ดนี้มีอยู่ในระบบแล้ว หรือเกิดข้อผิดพลาด" });
@@ -172,4 +226,3 @@ app.post('/api/add-code', (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
-          
