@@ -1,181 +1,175 @@
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
-const crypto = require('crypto');
+const path = require('path');
 
 const app = express();
+const PORT = process.env.PORT || 10000;
+
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// ----------------------------------------------------
-// 1. ระบบฐานข้อมูล (SQLite)
-// ----------------------------------------------------
-const db = new sqlite3.Database('./redeem.db', (err) => {
-  if (!err) {
-    db.run(`CREATE TABLE IF NOT EXISTS redeem_codes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      code TEXT UNIQUE NOT NULL,
-      account_info TEXT NOT NULL,
-      status TEXT DEFAULT 'unused',
-      used_at DATETIME
+// สร้างและเชื่อมต่อฐานข้อมูล SQLite
+const db = new sqlite3.Database('./database.db', (err) => {
+    if (err) console.error("Database error:", err.message);
+    else console.log("Connected to SQLite Database.");
+});
+
+// สร้างตารางเก็บโค้ดและไอดีไก่
+db.serialize(() => {
+    db.run(`CREATE TABLE IF NOT EXISTS items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE,
+        account_info TEXT,
+        is_used INTEGER DEFAULT 0
     )`);
-  }
 });
 
-// ----------------------------------------------------
-// 2. API ฝั่ง Backend
-// ----------------------------------------------------
-
-// API สำหรับแอดมินสร้างโค้ด
-app.post('/api/admin/generate-code', (req, res) => {
-  const { account_info } = req.body;
-  if (!account_info) {
-    return res.status(400).json({ success: false, message: 'กรุณาระบุข้อมูลไอดี' });
-  }
-
-  const randomStr = crypto.randomBytes(4).toString('hex').toUpperCase();
-  const generatedCode = `FF-${randomStr}`;
-
-  const sql = `INSERT INTO redeem_codes (code, account_info) VALUES (?, ?)`;
-  db.run(sql, [generatedCode, account_info], function (err) {
-    if (err) {
-      return res.status(500).json({ success: false, message: 'สร้างโค้ดไม่สำเร็จ' });
-    }
-    res.json({
-      success: true,
-      message: 'สร้างโค้ดสำเร็จ!',
-      code: generatedCode,
-      account_info: account_info
-    });
-  });
-});
-
-// API สำหรับผู้ใช้กรอกแลกรับไอดี
-app.post('/api/redeem', (req, res) => {
-  const { code } = req.body;
-  if (!code) {
-    return res.status(400).json({ success: false, message: 'กรุณากรอกรหัสโค้ด' });
-  }
-
-  const selectSql = `SELECT * FROM redeem_codes WHERE code = ?`;
-  db.get(selectSql, [code.trim().toUpperCase()], (err, row) => {
-    if (err) return res.status(500).json({ success: false, message: 'ระบบขัดข้อง' });
-    if (!row) return res.status(404).json({ success: false, message: 'ไม่พบรหัสโค้ดนี้ในระบบ' });
-    if (row.status === 'used') return res.status(400).json({ success: false, message: 'โค้ดนี้ถูกใช้งานไปแล้ว' });
-
-    const updateSql = `UPDATE redeem_codes SET status = 'used', used_at = CURRENT_TIMESTAMP WHERE id = ?`;
-    db.run(updateSql, [row.id], (updateErr) => {
-      if (updateErr) return res.status(500).json({ success: false, message: 'อัปเดตสถานะไม่สำเร็จ' });
-
-      res.json({
-        success: true,
-        message: 'แลกรับไอดีสำเร็จ!',
-        account_info: row.account_info
-      });
-    });
-  });
-});
-
-// ----------------------------------------------------
-// 3. หน้าเว็บ UI (HTML + JavaScript)
-// ----------------------------------------------------
+// ------------------- หน้าเว็บ HTML (UI) -------------------
 app.get('/', (req, res) => {
-  res.send(`
+    res.send(`
     <!DOCTYPE html>
     <html lang="th">
     <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>ระบบแลกไอดี Free Fire</title>
-      <style>
-        body { font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-        .card { background: #2a2a2a; padding: 25px; border-radius: 12px; width: 100%; max-width: 400px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        h2 { text-align: center; color: #ff9900; margin-top: 0; }
-        input { width: 100%; padding: 12px; margin: 10px 0; border-radius: 6px; border: 1px solid #444; background: #333; color: #fff; box-sizing: border-box; font-size: 16px; text-transform: uppercase; }
-        button { width: 100%; padding: 12px; background: #ff9900; border: none; color: #000; font-weight: bold; border-radius: 6px; cursor: pointer; font-size: 16px; margin-top: 5px; }
-        button:hover { background: #e68a00; }
-        .result-box { margin-top: 15px; padding: 12px; border-radius: 6px; display: none; word-break: break-all; }
-        .success { background: #1e4620; border: 1px solid #2e7d32; color: #a5d6a7; }
-        .error { background: #4a1515; border: 1px solid #c62828; color: #ef9a9a; }
-        .admin-section { margin-top: 25px; padding-top: 15px; border-top: 1px dashed #444; }
-        .admin-section h4 { margin: 0 0 10px 0; color: #aaa; }
-      </style>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>ระบบแลกไอดี Free Fire</title>
+        <style>
+            * { box-sizing: border-box; font-family: 'Kanit', sans-serif; }
+            body { background: #0f172a; color: #fff; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
+            .card { background: #1e293b; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); width: 100%; max-width: 400px; text-align: center; border: 1px solid #334155; }
+            h2 { color: #38bdf8; margin-bottom: 20px; }
+            input { width: 100%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: 16px; text-align: center; text-transform: uppercase; }
+            button { width: 100%; padding: 12px; border-radius: 8px; border: none; background: #22c55e; color: #fff; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+            button:hover { background: #16a34a; }
+            #result { margin-top: 20px; padding: 15px; border-radius: 8px; display: none; word-break: break-all; }
+            .success { background: #14532d; color: #4ade80; border: 1px solid #22c55e; }
+            .error { background: #451a1a; color: #f87171; border: 1px solid #ef4444; }
+            .admin-link { margin-top: 25px; display: block; color: #64748b; font-size: 12px; text-decoration: none; }
+        </style>
     </head>
     <body>
+        <div class="card">
+            <h2>🎁 เติมโค้ดรับไอดีไก่</h2>
+            <p style="color: #94a3b8; font-size: 14px;">กรอกโค้ดที่คุณได้รับเพื่อรับไอดีเข้าเกม</p>
+            <input type="text" id="codeInput" placeholder="กรอกโค้ดที่นี่..." />
+            <button onclick="redeemCode()">แลกไอดีทันที</button>
 
-      <div class="card">
-        <h2>🔥 แลกไอดี Free Fire</h2>
-        
-        <div>
-          <input type="text" id="redeemCode" placeholder="กรอกโค้ด เช่น FF-ABCD1234">
-          <button onclick="redeemCode()">ยืนยันการแลกโค้ด</button>
+            <div id="result"></div>
+            <a href="/admin" class="admin-link">เข้าสู่ระบบแอดมิน (สำหรับเจ้าของร้าน)</a>
         </div>
-        <div id="result" class="result-box"></div>
 
-        <div class="admin-section">
-          <h4>🛠️ สำหรับแอดมิน: สร้างโค้ดใหม่</h4>
-          <input type="text" id="accountInfo" placeholder="Username : Password ของไอดี" style="text-transform: none;">
-          <button onclick="generateCode()" style="background: #555; color: #fff;">สร้างโค้ด</button>
-          <div id="adminResult" class="result-box"></div>
-        </div>
-      </div>
+        <script>
+            async function redeemCode() {
+                const code = document.getElementById('codeInput').value.trim();
+                const resultDiv = document.getElementById('result');
+                if (!code) return alert("กรุณากรอกโค้ด!");
 
-      <script>
-        async function redeemCode() {
-          const code = document.getElementById('redeemCode').value;
-          const resultDiv = document.getElementById('result');
-          
-          if (!code) return alert('กรุณากรอกโค้ด');
+                resultDiv.style.display = 'none';
+                
+                const res = await fetch('/api/redeem', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code })
+                });
 
-          const response = await fetch('/api/redeem', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code: code })
-          });
-          const data = await response.json();
+                const data = await res.json();
+                resultDiv.style.display = 'block';
 
-          resultDiv.style.display = 'block';
-          if (data.success) {
-            resultDiv.className = 'result-box success';
-            resultDiv.innerHTML = '<strong>' + data.message + '</strong><br>ไอดีของคุณคือ:<br>' + data.account_info;
-          } else {
-            resultDiv.className = 'result-box error';
-            resultDiv.innerHTML = data.message;
-          }
-        }
-
-        async function generateCode() {
-          const accountInfo = document.getElementById('accountInfo').value;
-          const adminResultDiv = document.getElementById('adminResult');
-
-          if (!accountInfo) return alert('กรุณาระบุข้อมูลไอดี');
-
-          const response = await fetch('/api/admin/generate-code', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ account_info: accountInfo })
-          });
-          const data = await response.json();
-
-          adminResultDiv.style.display = 'block';
-          if (data.success) {
-            adminResultDiv.className = 'result-box success';
-            adminResultDiv.innerHTML = 'สร้างสำเร็จ!<br>โค้ดคือ: <strong>' + data.code + '</strong>';
-          } else {
-            adminResultDiv.className = 'result-box error';
-            adminResultDiv.innerHTML = data.message;
-          }
-        }
-      </script>
-
+                if (data.success) {
+                    resultDiv.className = 'success';
+                    resultDiv.innerHTML = '<b>🎉 แลกสำเร็จ!</b><br><br>ข้อมูลไอดีของคุณ:<br><h3 style="color:#fff; margin:10px 0;">' + data.account + '</h3><small>(คัดลอกรหัสแล้วนำไปใช้ได้เลย)</small>';
+                } else {
+                    resultDiv.className = 'error';
+                    resultDiv.innerHTML = '❌ ' + data.message;
+                }
+            }
+        </script>
     </body>
     </html>
-  `);
+    `);
 });
 
-// ----------------------------------------------------
-// 4. สั่งรัน Server (รองรับพอร์ตของ Render)
-// ----------------------------------------------------
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// ------------------- หน้าแอดมินสำหรับเพิ่มโค้ด -------------------
+app.get('/admin', (req, res) => {
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="th">
+    <head>
+        <meta charset="UTF-8">
+        <title>ระบบแอดมิน - เพิ่มโค้ดไอดีไก่</title>
+        <style>
+            body { background: #0f172a; color: #fff; font-family: sans-serif; padding: 20px; display: flex; justify-content: center; }
+            .box { background: #1e293b; padding: 25px; border-radius: 12px; width: 100%; max-width: 500px; }
+            input, textarea { width: 100%; padding: 10px; margin: 8px 0; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; }
+            button { width: 100%; padding: 12px; background: #3b82f6; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+            a { color: #94a3b8; display: inline-block; margin-top: 15px; }
+        </style>
+    </head>
+    <body>
+        <div class="box">
+            <h2>⚙️ แอดมิน: เพิ่มโค้ดและไอดีไก่</h2>
+            <label>โค้ดลับ (ตั้งเองได้เลย):</label>
+            <input type="text" id="addCode" placeholder="เช่น FREE-CHICKEN-01" />
+            
+            <label>ข้อมูลไอดีไก่ (User : Pass):</label>
+            <textarea id="addAccount" rows="3" placeholder="เช่น ID: chicken999 | Pass: 123456"></textarea>
+            
+            <button onclick="addCode()">เพิ่มเข้าฐานข้อมูล</button>
+            <br><br>
+            <a href="/">← กลับหน้าหลักลูกค้า</a>
+        </div>
+
+        <script>
+            async function addCode() {
+                const code = document.getElementById('addCode').value.trim();
+                const account = document.getElementById('addAccount').value.trim();
+                if(!code || !account) return alert("กรอกข้อมูลให้ครบ!");
+
+                const res = await fetch('/api/add-code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code, account })
+                });
+                const data = await res.json();
+                alert(data.message);
+                if(data.success) {
+                    document.getElementById('addCode').value = '';
+                    document.getElementById('addAccount').value = '';
+                }
+            }
+        </script>
+    </body>
+    </html>
+    `);
 });
-                                                            
+
+// ------------------- Backend API -------------------
+
+// 1. ระบบแลกโค้ด
+app.post('/api/redeem', (req, res) => {
+    const { code } = req.body;
+    db.get(`SELECT * FROM items WHERE code = ? AND is_used = 0`, [code], (err, row) => {
+        if (err) return res.json({ success: false, message: "เกิดข้อผิดพลาดของระบบ" });
+        if (!row) return res.json({ success: false, message: "โค้ดไม่ถูกต้อง หรือถูกใช้งานไปแล้ว!" });
+
+        // ทำเครื่องหมายว่าโค้ดถูกใช้แล้ว
+        db.run(`UPDATE items SET is_used = 1 WHERE id = ?`, [row.id], (err) => {
+            if (err) return res.json({ success: false, message: "บันทึกข้อมูลไม่สำเร็จ" });
+            res.json({ success: true, account: row.account_info });
+        });
+    });
+});
+
+// 2. ระบบเพิ่มโค้ด (สำหรับแอดมิน)
+app.post('/api/add-code', (req, res) => {
+    const { code, account } = req.body;
+    db.run(`INSERT INTO items (code, account_info) VALUES (?, ?)`, [code, account], function(err) {
+        if (err) return res.json({ success: false, message: "โค้ดนี้มีอยู่ในระบบแล้ว หรือเกิดข้อผิดพลาด" });
+        res.json({ success: true, message: "เพิ่มโค้ดและไอดีไก่เรียบร้อยแล้ว!" });
+    });
+});
+
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
+          
